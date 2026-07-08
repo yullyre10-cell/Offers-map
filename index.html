@@ -41,7 +41,7 @@
 
 <script>
   var SHEET_ID = '1_x9a6aaQFxCamkaM4EObeqXWGWd_hmAahIWVLo2nZGs';
-  var API_KEY = 'YOUR_KEY';
+  var API_KEY = 'AIzaSyAkKhfX5iHJJW7FHMYJ1OmQczmZ6ed5fSc';
   var RANGE = 'A2:K10000';
 
   var map, geocoder;
@@ -54,6 +54,7 @@
     return '#9334e6';
   }
 
+  // Priority for choosing a group's marker color: Dispo (buyer interest) > Renegotiation/other > Acquisition only
   function groupColor(types) {
     if (types.indexOf('Dispo') !== -1) return '#ea4335';
     var hasOther = types.some(function(t) { return t !== 'Acquisition' && t !== 'Dispo'; });
@@ -97,4 +98,130 @@
         }).filter(function(o) { return o.address; });
 
         document.getElementById('status').textContent = 'טוען ' + offersData.length + ' הצעות...';
-        groupAndPl
+        groupAndPlaceMarkers();
+      })
+      .catch(function(err) {
+        document.getElementById('status').textContent = 'שגיאה בטעינת הנתונים';
+        console.error(err);
+      });
+  }
+
+  function groupAndPlaceMarkers() {
+    // group offers by normalized address (properties can have several offers each)
+    var groups = {};
+    var order = [];
+    offersData.forEach(function(offer) {
+      var key = offer.address.trim().toLowerCase();
+      if (!groups[key]) {
+        groups[key] = { address: offer.address, offers: [], lat: offer.lat, lng: offer.lng };
+        order.push(key);
+      }
+      groups[key].offers.push(offer);
+      if (!groups[key].lat && offer.lat) { groups[key].lat = offer.lat; groups[key].lng = offer.lng; }
+    });
+
+    var pending = 0;
+    var placed = 0;
+    var total = order.length;
+
+    order.forEach(function(key) {
+      var group = groups[key];
+      if (group.lat && group.lng) {
+        createGroupMarker(group);
+        placed++;
+        updateStatus(placed, pending, total);
+      } else {
+        pending++;
+        geocoder.geocode({ address: group.address }, function(results, status) {
+          pending--;
+          if (status === 'OK' && results[0]) {
+            var loc = results[0].geometry.location;
+            group.lat = loc.lat();
+            group.lng = loc.lng();
+            createGroupMarker(group);
+            placed++;
+          }
+          updateStatus(placed, pending, total);
+        });
+      }
+    });
+    updateStatus(placed, pending, total);
+  }
+
+  function updateStatus(placed, pending, total) {
+    document.getElementById('status').textContent =
+      placed + ' נכסים על המפה (' + offersData.length + ' הצעות)' + (pending > 0 ? ' — מגאוקד עוד ' + pending : '');
+  }
+
+  function createGroupMarker(group) {
+    var types = group.offers.map(function(o) { return o.type; });
+    var color = groupColor(types);
+    var count = group.offers.length;
+
+    var marker = new google.maps.Marker({
+      position: { lat: group.lat, lng: group.lng },
+      map: map,
+      title: group.address + (count > 1 ? ' (' + count + ' הצעות)' : ''),
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        fillColor: color,
+        fillOpacity: 0.9,
+        strokeColor: '#ffffff',
+        strokeWeight: 1,
+        scale: count > 1 ? 11 : 8
+      },
+      label: count > 1 ? { text: String(count), color: '#ffffff', fontSize: '11px', fontWeight: 'bold' } : null
+    });
+    marker.offerTypes = types;
+
+    var content = '<div class="info-box">' +
+      '<div class="addr">' + escapeHtml(group.address) + (count > 1 ? ' — ' + count + ' הצעות' : '') + '</div>' +
+      group.offers.map(function(offer) {
+        return '<div class="offer-card">' +
+          '<div class="row"><b>סכום:</b> $' + escapeHtml(offer.offerAmount) + '</div>' +
+          '<div class="row"><b>Type:</b> ' + escapeHtml(offer.type) + '</div>' +
+          (offer.cashBuyer ? '<div class="row"><b>Cash Buyer:</b> ' + escapeHtml(offer.cashBuyer) + '</div>' : '') +
+          '<div class="row"><b>Status:</b> ' + escapeHtml(offer.status) + '</div>' +
+          '<div class="row"><b>הוגש ע"י:</b> ' + escapeHtml(offer.offerMadeBy) + '</div>' +
+          '<div class="row"><b>תאריך:</b> ' + escapeHtml(offer.date) + '</div>' +
+          (offer.podioItemLink ? '<div class="row"><a href="' + offer.podioItemLink + '" target="_blank">פתח בפודיו ↗</a></div>' : '') +
+          '</div>';
+      }).join('') +
+      '<div class="row" style="margin-top:6px;"><b>סטטוס נכס:</b> ' + escapeHtml(group.offers[0].leadStatus) + '</div>' +
+      '</div>';
+
+    var infoWindow = new google.maps.InfoWindow({ content: content });
+    marker.addListener('click', function() {
+      infoWindow.open(map, marker);
+    });
+
+    allMarkers.push(marker);
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function applyFilters() {
+    var showAcq = document.getElementById('filterAcquisition').checked;
+    var showDispo = document.getElementById('filterDispo').checked;
+    var showOther = document.getElementById('filterOther').checked;
+
+    allMarkers.forEach(function(marker) {
+      var types = marker.offerTypes;
+      var visible = types.some(function(t) {
+        if (t === 'Acquisition') return showAcq;
+        if (t === 'Dispo') return showDispo;
+        return showOther;
+      });
+      marker.setVisible(visible);
+    });
+  }
+</script>
+<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAkKhfX5iHJJW7FHMYJ1OmQczmZ6ed5fSc&loading=async&callback=initMap"></script>
+</body>
+</html>
