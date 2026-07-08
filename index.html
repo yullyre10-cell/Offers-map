@@ -23,30 +23,156 @@
   .info-box .offer-card:first-of-type { border-top: none; }
   .info-box .row { font-size: 13px; margin: 2px 0; }
   .info-box a { color: #1a73e8; }
+
+  #gate {
+    position: fixed; inset: 0; background: #1a3c34; color: white;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+    text-align: center; padding: 20px; z-index: 1000;
+  }
+  #gate h2 { margin: 0; font-size: 22px; }
+  #gate p { margin: 0; opacity: 0.85; font-size: 14px; max-width: 320px; }
+  #signInBtn {
+    background: white; color: #1a3c34; border: none; padding: 10px 20px;
+    border-radius: 6px; font-size: 15px; cursor: pointer; font-weight: bold;
+  }
+  #denied { color: #ffb4a9; font-size: 14px; display: none; }
+  #userBadge { font-size: 13px; opacity: 0.9; }
+  #signOutBtn {
+    background: transparent; color: white; border: 1px solid rgba(255,255,255,0.4);
+    padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  }
+  #hidden-app { display: none; height: 100%; }
 </style>
 </head>
 <body>
-<div id="app">
-  <div id="header">
-    <h1>מפת הצעות - YM Investment</h1>
-    <div id="controls">
-      <label><input type="checkbox" id="filterAcquisition" checked><span class="legend-dot" style="background:#1a73e8"></span>Acquisition</label>
-      <label><input type="checkbox" id="filterDispo" checked><span class="legend-dot" style="background:#ea4335"></span>Dispo</label>
-      <label><input type="checkbox" id="filterOther" checked><span class="legend-dot" style="background:#9334e6"></span>אחר (Renegotiation וכו')</label>
-      <span id="status">טוען נתונים...</span>
+
+<div id="gate">
+  <h2>מפת הצעות - YM Investment</h2>
+  <p>גישה לצוות בלבד. יש להתחבר עם חשבון Google מורשה כדי לצפות במפה.</p>
+  <button id="signInBtn">התחבר עם Google</button>
+  <p id="denied">החשבון שהתחברת איתו לא מורשה לצפות במפה הזו. פנה למנהל המערכת אם אתה חושב שזו טעות.</p>
+</div>
+
+<div id="hidden-app">
+  <div id="app">
+    <div id="header">
+      <h1>מפת הצעות - YM Investment</h1>
+      <div id="controls">
+        <label><input type="checkbox" id="filterAcquisition" checked><span class="legend-dot" style="background:#1a73e8"></span>Acquisition</label>
+        <label><input type="checkbox" id="filterDispo" checked><span class="legend-dot" style="background:#ea4335"></span>Dispo</label>
+        <label><input type="checkbox" id="filterOther" checked><span class="legend-dot" style="background:#9334e6"></span>אחר (Renegotiation וכו')</label>
+        <span id="status">טוען נתונים...</span>
+        <span id="userBadge"></span>
+        <button id="signOutBtn">התנתק</button>
+      </div>
     </div>
+    <div id="map"></div>
   </div>
-  <div id="map"></div>
 </div>
 
 <script>
   var SHEET_ID = '1_x9a6aaQFxCamkaM4EObeqXWGWd_hmAahIWVLo2nZGs';
-  var API_KEY = 'AIzaSyAkKhfX5iHJJW7FHMYJ1OmQczmZ6ed5fSc';
+  var OAUTH_CLIENT_ID = '1087744472950-95mbif2raq761kpacib6unfqsondc843.apps.googleusercontent.com';
+  var MAPS_API_KEY = 'AIzaSyAkKhfX5iHJJW7FHMYJ1OmQczmZ6ed5fSc';
   var RANGE = 'A2:K10000';
+  var SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/userinfo.email';
 
-  var map, geocoder;
+  var map, geocoder, tokenClient, accessToken;
   var allMarkers = [];
   var offersData = [];
+  var mapsScriptLoaded = false;
+
+  function loadMapsScript() {
+    if (mapsScriptLoaded) { return; }
+    mapsScriptLoaded = true;
+    var s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + MAPS_API_KEY + '&loading=async&callback=initMap';
+    s.async = true;
+    document.head.appendChild(s);
+  }
+
+  window.onload = function() {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: OAUTH_CLIENT_ID,
+      scope: SCOPE,
+      callback: handleTokenResponse
+    });
+    document.getElementById('signInBtn').addEventListener('click', function() {
+      document.getElementById('denied').style.display = 'none';
+      tokenClient.requestAccessToken();
+    });
+    document.getElementById('signOutBtn').addEventListener('click', function() {
+      if (accessToken) {
+        google.accounts.oauth2.revoke(accessToken, function() {});
+      }
+      accessToken = null;
+      document.getElementById('hidden-app').style.display = 'none';
+      document.getElementById('gate').style.display = 'flex';
+    });
+  };
+
+  function handleTokenResponse(resp) {
+    if (resp.error) {
+      showDenied();
+      return;
+    }
+    accessToken = resp.access_token;
+    verifyAndLoad();
+  }
+
+  function verifyAndLoad() {
+    var url = 'https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID + '/values/' + encodeURIComponent(RANGE);
+    fetch(url, { headers: { 'Authorization': 'Bearer ' + accessToken } })
+      .then(function(res) {
+        if (!res.ok) { throw new Error('denied'); }
+        return res.json();
+      })
+      .then(function(data) {
+        document.getElementById('gate').style.display = 'none';
+        document.getElementById('hidden-app').style.display = 'block';
+        fetchUserEmail();
+        processSheetData(data);
+        loadMapsScript();
+      })
+      .catch(function() {
+        showDenied();
+      });
+  }
+
+  function fetchUserEmail() {
+    fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { 'Authorization': 'Bearer ' + accessToken } })
+      .then(function(res) { return res.json(); })
+      .then(function(info) {
+        document.getElementById('userBadge').textContent = info.email || '';
+      })
+      .catch(function() {});
+  }
+
+  function showDenied() {
+    document.getElementById('denied').style.display = 'block';
+  }
+
+  function processSheetData(data) {
+    var rows = data.values || [];
+    offersData = rows.map(function(r) {
+      return {
+        address: r[0] || '',
+        offerAmount: r[1] || '',
+        type: r[2] || '',
+        cashBuyer: r[3] || '',
+        status: r[4] || '',
+        offerMadeBy: r[5] || '',
+        date: r[6] || '',
+        leadStatus: r[7] || '',
+        podioItemLink: r[8] || '',
+        lat: r[9] ? parseFloat(r[9]) : null,
+        lng: r[10] ? parseFloat(r[10]) : null
+      };
+    }).filter(function(o) { return o.address; });
+
+    document.getElementById('status').textContent = 'טוען ' + offersData.length + ' הצעות...';
+    if (map) { groupAndPlaceMarkers(); }
+  }
 
   function typeColor(type) {
     if (type === 'Acquisition') return '#1a73e8';
@@ -54,7 +180,6 @@
     return '#9334e6';
   }
 
-  // Priority for choosing a group's marker color: Dispo (buyer interest) > Renegotiation/other > Acquisition only
   function groupColor(types) {
     if (types.indexOf('Dispo') !== -1) return '#ea4335';
     var hasOther = types.some(function(t) { return t !== 'Acquisition' && t !== 'Dispo'; });
@@ -68,46 +193,15 @@
       zoom: 10
     });
     geocoder = new google.maps.Geocoder();
-    loadData();
 
     document.getElementById('filterAcquisition').addEventListener('change', applyFilters);
     document.getElementById('filterDispo').addEventListener('change', applyFilters);
     document.getElementById('filterOther').addEventListener('change', applyFilters);
-  }
 
-  function loadData() {
-    var url = 'https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID + '/values/' + encodeURIComponent(RANGE) + '?key=' + API_KEY;
-    fetch(url)
-      .then(function(res) { return res.json(); })
-      .then(function(data) {
-        var rows = data.values || [];
-        offersData = rows.map(function(r) {
-          return {
-            address: r[0] || '',
-            offerAmount: r[1] || '',
-            type: r[2] || '',
-            cashBuyer: r[3] || '',
-            status: r[4] || '',
-            offerMadeBy: r[5] || '',
-            date: r[6] || '',
-            leadStatus: r[7] || '',
-            podioItemLink: r[8] || '',
-            lat: r[9] ? parseFloat(r[9]) : null,
-            lng: r[10] ? parseFloat(r[10]) : null
-          };
-        }).filter(function(o) { return o.address; });
-
-        document.getElementById('status').textContent = 'טוען ' + offersData.length + ' הצעות...';
-        groupAndPlaceMarkers();
-      })
-      .catch(function(err) {
-        document.getElementById('status').textContent = 'שגיאה בטעינת הנתונים';
-        console.error(err);
-      });
+    if (offersData.length > 0) { groupAndPlaceMarkers(); }
   }
 
   function groupAndPlaceMarkers() {
-    // group offers by normalized address (properties can have several offers each)
     var groups = {};
     var order = [];
     offersData.forEach(function(offer) {
@@ -222,6 +316,6 @@
     });
   }
 </script>
-<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAkKhfX5iHJJW7FHMYJ1OmQczmZ6ed5fSc&loading=async&callback=initMap"></script>
+<script src="https://accounts.google.com/gsi/client"></script>
 </body>
 </html>
