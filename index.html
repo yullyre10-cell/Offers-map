@@ -42,6 +42,17 @@
     padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;
   }
   #hidden-app { display: none; height: 100%; }
+  #searchBox {
+    display: flex; align-items: center; gap: 4px;
+  }
+  #searchInput {
+    padding: 5px 8px; border-radius: 4px; border: none; font-size: 13px; width: 200px;
+  }
+  #searchBtn {
+    background: #2d5a4f; color: white; border: 1px solid rgba(255,255,255,0.4);
+    padding: 5px 10px; border-radius: 4px; font-size: 13px; cursor: pointer;
+  }
+  #searchStatus { font-size: 12px; color: #ffb4a9; }
 </style>
 </head>
 <body>
@@ -58,10 +69,15 @@
     <div id="header">
       <h1>מפת הצעות - YM Investment</h1>
       <div id="controls">
+        <div id="searchBox">
+          <input type="text" id="searchInput" placeholder="חפש כתובת...">
+          <button id="searchBtn">חפש</button>
+        </div>
         <label><input type="checkbox" id="filterAcquisition" checked><span class="legend-dot" style="background:#1a73e8"></span>Acquisition</label>
         <label><input type="checkbox" id="filterDispo" checked><span class="legend-dot" style="background:#ea4335"></span>Dispo</label>
         <label><input type="checkbox" id="filterOther" checked><span class="legend-dot" style="background:#9334e6"></span>אחר (Renegotiation וכו')</label>
         <span id="status">טוען נתונים...</span>
+        <span id="searchStatus"></span>
         <span id="userBadge"></span>
         <button id="signOutBtn">התנתק</button>
       </div>
@@ -198,7 +214,46 @@
     document.getElementById('filterDispo').addEventListener('change', applyFilters);
     document.getElementById('filterOther').addEventListener('change', applyFilters);
 
+    document.getElementById('searchBtn').addEventListener('click', searchAddress);
+    document.getElementById('searchInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { searchAddress(); }
+    });
+
     if (offersData.length > 0) { groupAndPlaceMarkers(); }
+  }
+
+  var searchMarker = null;
+  function searchAddress() {
+    var query = document.getElementById('searchInput').value.trim();
+    var statusEl = document.getElementById('searchStatus');
+    statusEl.textContent = '';
+    if (!query) { return; }
+
+    statusEl.textContent = 'מחפש...';
+    geocoder.geocode({ address: query }, function(results, status) {
+      if (status === 'OK' && results[0]) {
+        var loc = results[0].geometry.location;
+        map.panTo(loc);
+        map.setZoom(16);
+        if (searchMarker) { searchMarker.setMap(null); }
+        searchMarker = new google.maps.Marker({
+          position: loc,
+          map: map,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            fillColor: '#ffd700',
+            fillOpacity: 1,
+            strokeColor: '#000000',
+            strokeWeight: 2,
+            scale: 9
+          },
+          zIndex: 999
+        });
+        statusEl.textContent = '';
+      } else {
+        statusEl.textContent = 'הכתובת לא נמצאה';
+      }
+    });
   }
 
   function groupAndPlaceMarkers() {
