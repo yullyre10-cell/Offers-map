@@ -97,6 +97,7 @@
   var allMarkers = [];
   var offersData = [];
   var mapsScriptLoaded = false;
+  var markersByAddress = {};
 
   function loadMapsScript() {
     if (mapsScriptLoaded) { return; }
@@ -223,11 +224,32 @@
   }
 
   var searchMarker = null;
+  function findKnownMarker(query) {
+    var norm = query.trim().toLowerCase();
+    if (markersByAddress[norm]) { return markersByAddress[norm]; }
+    var found = null;
+    Object.keys(markersByAddress).forEach(function(key) {
+      if (!found && (key.indexOf(norm) !== -1 || norm.indexOf(key) !== -1)) {
+        found = markersByAddress[key];
+      }
+    });
+    return found;
+  }
+
   function searchAddress() {
     var query = document.getElementById('searchInput').value.trim();
     var statusEl = document.getElementById('searchStatus');
     statusEl.textContent = '';
     if (!query) { return; }
+
+    var knownMarker = findKnownMarker(query);
+    if (knownMarker) {
+      map.panTo(knownMarker.getPosition());
+      map.setZoom(17);
+      google.maps.event.trigger(knownMarker, 'click');
+      statusEl.textContent = '';
+      return;
+    }
 
     statusEl.textContent = 'מחפש...';
     geocoder.geocode({ address: query }, function(results, status) {
@@ -249,7 +271,7 @@
           },
           zIndex: 999
         });
-        statusEl.textContent = '';
+        statusEl.textContent = 'לא נמצא נכס תואם בנתונים - זו הכתובת הכללית בלבד';
       } else {
         statusEl.textContent = 'הכתובת לא נמצאה';
       }
@@ -343,8 +365,10 @@
     marker.addListener('click', function() {
       infoWindow.open(map, marker);
     });
+    marker.infoWindow = infoWindow;
 
     allMarkers.push(marker);
+    markersByAddress[group.address.trim().toLowerCase()] = marker;
   }
 
   function escapeHtml(str) {
